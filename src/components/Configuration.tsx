@@ -9,6 +9,7 @@ export const Configuration: React.FC<ConfigurationProps> = ({ onConfigSaved }) =
   const [url, setUrl] = useState(localStorage.getItem('jira_url') || '');
   const [email, setEmail] = useState(localStorage.getItem('jira_email') || '');
   const [token, setToken] = useState('');
+  const [projectKey, setProjectKey] = useState(localStorage.getItem('jira_project') || '');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -29,9 +30,11 @@ export const Configuration: React.FC<ConfigurationProps> = ({ onConfigSaved }) =
         console.log('Saving to localStorage...');
         localStorage.setItem('jira_url', url);
         localStorage.setItem('jira_email', email);
+        localStorage.setItem('jira_project', projectKey);
         console.log('Verifying localStorage:', {
           saved_url: localStorage.getItem('jira_url'),
-          saved_email: localStorage.getItem('jira_email')
+          saved_email: localStorage.getItem('jira_email'),
+          saved_project: localStorage.getItem('jira_project')
         });
         
         console.log('Calling onConfigSaved...');
@@ -86,6 +89,20 @@ export const Configuration: React.FC<ConfigurationProps> = ({ onConfigSaved }) =
           <a href="https://id.atlassian.com/manage-profile/security/api-tokens" target="_blank" rel="noopener noreferrer">
             Generate API Token
           </a>
+        </small>
+      </div>
+
+      <div className="form-group">
+        <label htmlFor="project">Project Key (Optional)</label>
+        <input
+          id="project"
+          type="text"
+          placeholder="e.g., PROJ, DEV, TEST (leave empty for all projects)"
+          value={projectKey}
+          onChange={(e) => setProjectKey(e.target.value.toUpperCase())}
+        />
+        <small>
+          Filter tasks to show only from this project. Leave empty to see all your tasks.
         </small>
       </div>
 

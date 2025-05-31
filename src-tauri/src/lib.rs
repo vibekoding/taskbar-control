@@ -245,11 +245,16 @@ async fn test_connection(url: String, email: String, token: String) -> Result<bo
 }
 
 #[tauri::command]
-async fn fetch_tasks(url: String, email: String, token: String) -> Result<Vec<JiraTask>, String> {
+async fn fetch_tasks(url: String, email: String, token: String, project_key: Option<String>) -> Result<Vec<JiraTask>, String> {
     let client = reqwest::Client::new();
     let auth = general_purpose::STANDARD.encode(format!("{}:{}", email, token));
     
-    let jql = "assignee = currentUser() AND status NOT IN (Done, Closed, Resolved) ORDER BY priority DESC, updated DESC";
+    let base_jql = "assignee = currentUser() AND status NOT IN (Done, Closed, Resolved)";
+    let jql = if let Some(project) = project_key {
+        format!("{} AND project = {} ORDER BY priority DESC, updated DESC", base_jql, project)
+    } else {
+        format!("{} ORDER BY priority DESC, updated DESC", base_jql)
+    };
     println!("Executing JQL: {}", jql);
     
     let response = client
@@ -308,28 +313,10 @@ async fn update_menu_with_tasks(app: AppHandle, tasks: Vec<JiraTask>) -> Result<
             .enabled(false)
             .build(&app)
             .map_err(|e| e.to_string())?;
-        let menu_builder = menu_builder.item(&header);
+        let mut menu_builder = menu_builder.item(&header);
         
         // Add separator
-        let menu_builder = menu_builder.separator();
-        
-        // Add tasks (limit to 10 most recent)
-        let task_items: Result<Vec<_>, String> = tasks.iter().take(10).enumerate().map(|(i, task)| {
-            let task_text = format!("{} - {}", task.key, 
-                if task.summary.len() > 40 { 
-                    format!("{}...", &task.summary[..37]) 
-                } else { 
-                    task.summary.clone() 
-                });
-            MenuItemBuilder::with_id(format!("task_{}", i), task_text)
-                .build(&app)
-                .map_err(|e| e.to_string())
-        }).collect();
-        
-        let mut menu_builder = menu_builder;
-        for item in task_items? {
-            menu_builder = menu_builder.item(&item);
-        }
+        menu_builder = menu_builder.separator();
         
         if tasks.is_empty() {
             let no_tasks = MenuItemBuilder::with_id("no_tasks", "No tasks assigned")
@@ -337,31 +324,98 @@ async fn update_menu_with_tasks(app: AppHandle, tasks: Vec<JiraTask>) -> Result<
                 .build(&app)
                 .map_err(|e| e.to_string())?;
             menu_builder = menu_builder.item(&no_tasks);
+        } else {
+            // Group tasks by status
+            let mut status_groups: std::collections::HashMap<String, Vec<(usize, &JiraTask)>> = std::collections::HashMap::new();
+            
+            for (i, task) in tasks.iter().enumerate() {
+                status_groups.entry(task.status.clone()).or_insert_with(Vec::new).push((i, task));
+            }
+            
+            // Sort statuses (common Jira workflow order)
+            let status_order = vec!["To Do", "In Progress", "In Review", "Code Review", "Testing", "Ready for Deployment"];
+            let mut sorted_statuses: Vec<String> = status_order.iter()
+                .filter(|&status| status_groups.contains_key(*status))
+                .map(|s| s.to_string())
+                .collect();
+            
+            // Add any other statuses not in the predefined order
+            for status in status_groups.keys() {
+                if !sorted_statuses.contains(status) {
+                    sorted_statuses.push(status.clone());
+                }
+            }
+            
+            let mut task_count = 0;
+            for status in sorted_statuses {
+                if let Some(status_tasks) = status_groups.get(&status) {
+                    // Add status header
+                    let status_header = MenuItemBuilder::with_id(
+                        format!("status_{}", status.replace(" ", "_")),
+                        format!("── {} ({}) ──", status, status_tasks.len())
+                    )
+                    .enabled(false)
+                    .build(&app)
+                    .map_err(|e| e.to_string())?;
+                    menu_builder = menu_builder.item(&status_header);
+                    
+                    // Add tasks for this status (limit 5 per status, 15 total)
+                    for &(original_index, task) in status_tasks.iter().take(5) {
+                        if task_count >= 15 { break; }
+                        
+                        let task_text = format!("  {} - {}", task.key, 
+                            if task.summary.len() > 35 { 
+                                format!("{}...", &task.summary[..32]) 
+                            } else { 
+                                task.summary.clone() 
+                            });
+                        
+                        let task_item = MenuItemBuilder::with_id(format!("task_{}", original_index), task_text)
+                            .build(&app)
+                            .map_err(|e| e.to_string())?;
+                        menu_builder = menu_builder.item(&task_item);
+                        
+                        task_count += 1;
+                    }
+                    
+                    if task_count >= 15 { break; }
+                }
+            }
+            
+            // Show if there are more tasks
+            if tasks.len() > task_count {
+                let more_tasks = MenuItemBuilder::with_id("more_tasks", 
+                    format!("... and {} more tasks", tasks.len() - task_count))
+                    .enabled(false)
+                    .build(&app)
+                    .map_err(|e| e.to_string())?;
+                menu_builder = menu_builder.item(&more_tasks);
+            }
         }
         
         // Add separator
-        let menu_builder = menu_builder.separator();
+        menu_builder = menu_builder.separator();
         
         // Add refresh option
         let refresh = MenuItemBuilder::with_id("refresh", "↻ Refresh")
             .build(&app)
             .map_err(|e| e.to_string())?;
-        let menu_builder = menu_builder.item(&refresh);
+        menu_builder = menu_builder.item(&refresh);
         
         // Add show window option
         let show = MenuItemBuilder::with_id("show", "⚙️ Settings")
             .build(&app)
             .map_err(|e| e.to_string())?;
-        let menu_builder = menu_builder.item(&show);
+        menu_builder = menu_builder.item(&show);
         
         // Add separator before quit
-        let menu_builder = menu_builder.separator();
+        menu_builder = menu_builder.separator();
         
         // Add quit option
         let quit = MenuItemBuilder::with_id("quit", "Quit")
             .build(&app)
             .map_err(|e| e.to_string())?;
-        let menu_builder = menu_builder.item(&quit);
+        menu_builder = menu_builder.item(&quit);
         
         let menu = menu_builder.build()
             .map_err(|e| e.to_string())?;

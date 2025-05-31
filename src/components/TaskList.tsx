@@ -24,8 +24,9 @@ export const TaskList: React.FC<TaskListProps> = ({ onConfigurationNeeded }) => 
   const loadTasks = async () => {
     const url = localStorage.getItem('jira_url');
     const email = localStorage.getItem('jira_email');
+    const project = localStorage.getItem('jira_project');
     
-    console.log('TaskList loadTasks - localStorage check:', { url, email });
+    console.log('TaskList loadTasks - localStorage check:', { url, email, project });
     
     if (!url || !email) {
       console.log('TaskList: Missing configuration, calling onConfigurationNeeded');
@@ -35,7 +36,13 @@ export const TaskList: React.FC<TaskListProps> = ({ onConfigurationNeeded }) => 
 
     try {
       const token = await invoke<string>('load_credentials', { email });
-      const fetchedTasks = await invoke<JiraTask[]>('fetch_tasks', { url, email, token });
+      const projectKey = project && project.trim() !== '' ? project : null;
+      const fetchedTasks = await invoke<JiraTask[]>('fetch_tasks', { 
+        url, 
+        email, 
+        token, 
+        projectKey 
+      });
       setTasks(fetchedTasks);
       setError('');
       
@@ -122,10 +129,15 @@ export const TaskList: React.FC<TaskListProps> = ({ onConfigurationNeeded }) => 
     );
   }
 
+  const projectKey = localStorage.getItem('jira_project');
+  const headerText = projectKey && projectKey.trim() !== '' 
+    ? `${projectKey} Tasks (${tasks.length})` 
+    : `My Tasks (${tasks.length})`;
+
   return (
     <div className="task-list">
       <div className="header">
-        <h2>My Tasks ({tasks.length})</h2>
+        <h2>{headerText}</h2>
         <button onClick={loadTasks} className="refresh-btn" title="Refresh">
           ↻
         </button>
