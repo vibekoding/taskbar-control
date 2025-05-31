@@ -67,7 +67,17 @@ export const TaskList: React.FC<TaskListProps> = ({ onConfigurationNeeded }) => 
 
   useEffect(() => {
     loadTasks();
-    
+  }, []);
+
+  useEffect(() => {
+    // Set up auto-refresh
+    const interval = setInterval(loadTasks, refreshInterval * 60 * 1000);
+    return () => {
+      clearInterval(interval);
+    };
+  }, [refreshInterval]);
+
+  useEffect(() => {
     // Expose functions to window for menu integration
     (window as any).refreshTasks = loadTasks;
     (window as any).openTaskByIndex = (index: number) => {
@@ -76,14 +86,11 @@ export const TaskList: React.FC<TaskListProps> = ({ onConfigurationNeeded }) => 
       }
     };
     
-    // Set up auto-refresh
-    const interval = setInterval(loadTasks, refreshInterval * 60 * 1000);
     return () => {
-      clearInterval(interval);
       delete (window as any).refreshTasks;
       delete (window as any).openTaskByIndex;
     };
-  }, [refreshInterval, tasks]);
+  }, [tasks]);
 
   const getPriorityClass = (priority: string) => {
     const priorityLower = priority.toLowerCase();
