@@ -11,6 +11,11 @@ interface JiraTask {
   assignee?: string;
 }
 
+interface JiraTransition {
+  id: string;
+  name: string;
+}
+
 interface TaskListProps {
   onConfigurationNeeded: () => void;
 }
@@ -20,6 +25,9 @@ export const TaskList: React.FC<TaskListProps> = ({ onConfigurationNeeded }) => 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [refreshInterval, setRefreshInterval] = useState(5);
+  const [expandedTask, setExpandedTask] = useState<string | null>(null);
+  const [transitions, setTransitions] = useState<{[key: string]: JiraTransition[]}>({});
+  const [transitioning, setTransitioning] = useState<string | null>(null);
 
   const loadTasks = async () => {
     const url = localStorage.getItem('jira_url');
@@ -69,6 +77,67 @@ export const TaskList: React.FC<TaskListProps> = ({ onConfigurationNeeded }) => 
     const url = localStorage.getItem('jira_url');
     if (url) {
       await open(`${url}/browse/${key}`);
+    }
+  };
+
+  const loadTransitions = async (taskKey: string) => {
+    const url = localStorage.getItem('jira_url');
+    const email = localStorage.getItem('jira_email');
+    
+    if (!url || !email) return;
+
+    try {
+      const token = await invoke<string>('load_credentials', { email });
+      const taskTransitions = await invoke<JiraTransition[]>('get_task_transitions', {
+        url,
+        email,
+        token,
+        taskKey
+      });
+      
+      setTransitions(prev => ({ ...prev, [taskKey]: taskTransitions }));
+    } catch (err) {
+      console.error('Failed to load transitions:', err);
+    }
+  };
+
+  const handleStatusChange = async (taskKey: string, transitionId: string) => {
+    const url = localStorage.getItem('jira_url');
+    const email = localStorage.getItem('jira_email');
+    
+    if (!url || !email) return;
+
+    setTransitioning(taskKey);
+
+    try {
+      const token = await invoke<string>('load_credentials', { email });
+      await invoke('transition_task', {
+        url,
+        email,
+        token,
+        taskKey,
+        transitionId
+      });
+      
+      // Reload tasks after successful transition
+      await loadTasks();
+      setExpandedTask(null);
+    } catch (err) {
+      console.error('Failed to transition task:', err);
+      setError(`Failed to update task status: ${err}`);
+    } finally {
+      setTransitioning(null);
+    }
+  };
+
+  const toggleTaskExpansion = async (taskKey: string) => {
+    if (expandedTask === taskKey) {
+      setExpandedTask(null);
+    } else {
+      setExpandedTask(taskKey);
+      if (!transitions[taskKey]) {
+        await loadTransitions(taskKey);
+      }
     }
   };
 
@@ -160,19 +229,56 @@ export const TaskList: React.FC<TaskListProps> = ({ onConfigurationNeeded }) => 
           <div className="no-tasks">No tasks assigned to you 🎉</div>
         ) : (
           tasks.map((task) => (
-            <div key={task.id} className="task" onClick={() => openTask(task.key)}>
-              <div className="task-header">
-                <span className="task-key">{task.key}</span>
-                <span className={`priority ${getPriorityClass(task.priority)}`}>
-                  {task.priority}
-                </span>
+            <div key={task.id} className="task">
+              <div className="task-content" onClick={() => openTask(task.key)}>
+                <div className="task-header">
+                  <span className="task-key">{task.key}</span>
+                  <span className={`priority ${getPriorityClass(task.priority)}`}>
+                    {task.priority}
+                  </span>
+                </div>
+                <div className="task-summary">{task.summary}</div>
+                <div className="task-footer">
+                  <span className={`status ${getStatusClass(task.status)}`}>
+                    {task.status}
+                  </span>
+                </div>
               </div>
-              <div className="task-summary">{task.summary}</div>
-              <div className="task-footer">
-                <span className={`status ${getStatusClass(task.status)}`}>
-                  {task.status}
-                </span>
+              
+              <div className="task-actions">
+                <button 
+                  className="expand-btn"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    toggleTaskExpansion(task.key);
+                  }}
+                  title="Change Status"
+                >
+                  {expandedTask === task.key ? '▲' : '▼'}
+                </button>
               </div>
+
+              {expandedTask === task.key && (
+                <div className="task-transitions">
+                  <h4>Change Status:</h4>
+                  {transitions[task.key] ? (
+                    <div className="transition-buttons">
+                      {transitions[task.key].map((transition) => (
+                        <button
+                          key={transition.id}
+                          className="transition-btn"
+                          disabled={transitioning === task.key}
+                          onClick={() => handleStatusChange(task.key, transition.id)}
+                        >
+                          {transitioning === task.key ? 'Updating...' : transition.name}
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="loading-transitions">Loading transitions...</div>
+                  )}
+                </div>
+              )}
             </div>
           ))
         )}

@@ -276,18 +276,104 @@ button:disabled {
   background: rgba(255, 255, 255, 0.05);
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 12px;
-  padding: 16px;
   margin-bottom: 12px;
-  cursor: pointer;
   transition: all 0.2s;
   backdrop-filter: blur(10px);
+  overflow: hidden;
 }
 
 .task:hover {
   background: rgba(255, 255, 255, 0.1);
   border-color: rgba(74, 158, 255, 0.5);
-  transform: translateX(4px);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+}
+
+.task-content {
+  padding: 16px;
+  cursor: pointer;
+  position: relative;
+}
+
+.task-content:hover {
+  transform: translateX(4px);
+}
+
+.task-actions {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  display: flex;
+  gap: 8px;
+}
+
+.expand-btn {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 6px;
+  color: #e0e0e0;
+  cursor: pointer;
+  font-size: 12px;
+  transition: all 0.2s;
+}
+
+.expand-btn:hover {
+  background: rgba(255, 255, 255, 0.2);
+  transform: scale(1.1);
+}
+
+.task-transitions {
+  padding: 16px;
+  background: rgba(0, 0, 0, 0.2);
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.task-transitions h4 {
+  margin: 0 0 12px 0;
+  font-size: 14px;
+  color: #b0b0b0;
+  font-weight: 600;
+}
+
+.transition-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.transition-btn {
+  width: auto;
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  background: rgba(74, 158, 255, 0.2);
+  border: 1px solid rgba(74, 158, 255, 0.3);
+  border-radius: 6px;
+  color: #4a9eff;
+  cursor: pointer;
+  transition: all 0.2s;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.transition-btn:hover:not(:disabled) {
+  background: rgba(74, 158, 255, 0.3);
+  border-color: rgba(74, 158, 255, 0.5);
+  transform: translateY(-1px);
+}
+
+.transition-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.loading-transitions {
+  color: #808080;
+  font-size: 12px;
+  font-style: italic;
 }
 
 .task-header {

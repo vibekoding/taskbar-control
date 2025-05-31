@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use tauri::{
     Manager, WindowEvent, State, AppHandle,
     menu::{MenuBuilder, MenuItemBuilder},
-    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent, TrayIcon},
+    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
 };
 use base64::{Engine as _, engine::general_purpose};
 use std::sync::{Arc, Mutex};
@@ -32,6 +32,12 @@ pub struct JiraTask {
     pub status: String,
     pub priority: String,
     pub assignee: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct JiraTransition {
+    pub id: String,
+    pub name: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -245,7 +251,7 @@ async fn test_connection(url: String, email: String, token: String) -> Result<bo
 }
 
 #[tauri::command]
-async fn fetch_tasks(url: String, email: String, token: String, project_key: Option<String>) -> Result<Vec<JiraTask>, String> {
+async fn fetch_tasks(url: String, email: String, token: String, project_key: Option<String>, status_filter: Option<Vec<String>>) -> Result<Vec<JiraTask>, String> {
     let client = reqwest::Client::new();
     let auth = general_purpose::STANDARD.encode(format!("{}:{}", email, token));
     
@@ -298,6 +304,75 @@ async fn fetch_tasks(url: String, email: String, token: String, project_key: Opt
     
     println!("Returning {} tasks", tasks.len());
     Ok(tasks)
+}
+
+#[tauri::command]
+async fn get_task_transitions(url: String, email: String, token: String, task_key: String) -> Result<Vec<JiraTransition>, String> {
+    let client = reqwest::Client::new();
+    let auth = general_purpose::STANDARD.encode(format!("{}:{}", email, token));
+    
+    println!("Getting transitions for task: {}", task_key);
+    
+    let response = client
+        .get(format!("{}/rest/api/3/issue/{}/transitions", url, task_key))
+        .header("Authorization", format!("Basic {}", auth))
+        .header("Accept", "application/json")
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    
+    if !response.status().is_success() {
+        return Err(format!("Failed to get transitions: {}", response.status()));
+    }
+    
+    let json: serde_json::Value = response.json().await.map_err(|e| e.to_string())?;
+    
+    let transitions = json["transitions"]
+        .as_array()
+        .ok_or("Invalid transitions response format")?
+        .iter()
+        .map(|transition| {
+            Ok(JiraTransition {
+                id: transition["id"].as_str().unwrap_or("").to_string(),
+                name: transition["name"].as_str().unwrap_or("").to_string(),
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    
+    println!("Found {} transitions for {}", transitions.len(), task_key);
+    Ok(transitions)
+}
+
+#[tauri::command]
+async fn transition_task(url: String, email: String, token: String, task_key: String, transition_id: String) -> Result<(), String> {
+    let client = reqwest::Client::new();
+    let auth = general_purpose::STANDARD.encode(format!("{}:{}", email, token));
+    
+    println!("Transitioning task {} with transition {}", task_key, transition_id);
+    
+    let body = serde_json::json!({
+        "transition": {
+            "id": transition_id
+        }
+    });
+    
+    let response = client
+        .post(format!("{}/rest/api/3/issue/{}/transitions", url, task_key))
+        .header("Authorization", format!("Basic {}", auth))
+        .header("Content-Type", "application/json")
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    
+    let status = response.status();
+    if !status.is_success() {
+        let error_text = response.text().await.unwrap_or_default();
+        return Err(format!("Failed to transition task: {} - {}", status, error_text));
+    }
+    
+    println!("Successfully transitioned task {}", task_key);
+    Ok(())
 }
 
 #[tauri::command]
@@ -450,6 +525,8 @@ pub fn run() {
             clear_credentials,
             test_connection,
             fetch_tasks,
+            get_task_transitions,
+            transition_task,
             set_hide_on_blur,
             update_menu_with_tasks
         ])
@@ -462,7 +539,7 @@ pub fn run() {
                 .items(&[&show, &quit])
                 .build()?;
             
-            let tray = TrayIconBuilder::with_id("main")
+            let _tray = TrayIconBuilder::with_id("main")
                 .icon(app.default_window_icon().unwrap().clone())
                 .menu(&menu)
                 .on_menu_event(move |app, event| {
