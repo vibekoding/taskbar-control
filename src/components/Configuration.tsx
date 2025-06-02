@@ -1,8 +1,12 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 
 interface ConfigurationProps {
   onConfigSaved: () => void;
+}
+
+interface StatusEmojiConfig {
+  [status: string]: string;
 }
 
 export const Configuration: React.FC<ConfigurationProps> = ({ onConfigSaved }) => {
@@ -12,6 +16,89 @@ export const Configuration: React.FC<ConfigurationProps> = ({ onConfigSaved }) =
   const [projectKey, setProjectKey] = useState(localStorage.getItem('jira_project') || '');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [availableStatuses, setAvailableStatuses] = useState<string[]>([]);
+  const [statusEmojis, setStatusEmojis] = useState<StatusEmojiConfig>({});
+  const [showEmojiConfig, setShowEmojiConfig] = useState(false);
+  const [loadingStatuses, setLoadingStatuses] = useState(false);
+
+  // Default emoji mappings
+  const defaultEmojis: StatusEmojiConfig = {
+    'To Do': '📋',
+    'In Progress': '🔄',
+    'In Review': '👀',
+    'Code Review': '💻',
+    'Testing': '🧪',
+    'Ready for Deployment': '🚀',
+    'Done': '✅',
+    'Closed': '🔒',
+    'Resolved': '✅',
+    'Blocked': '🚫',
+    'Em andamento': '🔄',
+    'Para fazer': '📋',
+    'Concluído': '✅',
+    'Bloqueado': '🚫'
+  };
+
+  useEffect(() => {
+    // Load saved emoji configurations
+    const savedEmojis = localStorage.getItem('status_emojis');
+    if (savedEmojis) {
+      try {
+        setStatusEmojis(JSON.parse(savedEmojis));
+      } catch (e) {
+        console.error('Error loading saved emojis:', e);
+      }
+    }
+  }, []);
+
+  const loadAvailableStatuses = async () => {
+    if (!url || !email || !token) {
+      setError('Please fill in all connection details first');
+      return;
+    }
+
+    setLoadingStatuses(true);
+    try {
+      const statuses = await invoke<string[]>('get_available_statuses', {
+        url,
+        email,
+        token,
+        projectKey: projectKey && projectKey.trim() !== '' ? projectKey : null
+      });
+      
+      setAvailableStatuses(statuses);
+      
+      // Set default emojis for new statuses
+      const newStatusEmojis = { ...statusEmojis };
+      statuses.forEach(status => {
+        if (!newStatusEmojis[status]) {
+          newStatusEmojis[status] = defaultEmojis[status] || '📌';
+        }
+      });
+      setStatusEmojis(newStatusEmojis);
+      
+    } catch (err) {
+      console.error('Failed to load available statuses:', err);
+      setError(`Failed to load statuses: ${err}`);
+    } finally {
+      setLoadingStatuses(false);
+    }
+  };
+
+  const handleEmojiChange = (status: string, emoji: string) => {
+    const newStatusEmojis = { ...statusEmojis, [status]: emoji };
+    setStatusEmojis(newStatusEmojis);
+    localStorage.setItem('status_emojis', JSON.stringify(newStatusEmojis));
+  };
+
+  const resetToDefaults = () => {
+    const newStatusEmojis: StatusEmojiConfig = {};
+    availableStatuses.forEach(status => {
+      newStatusEmojis[status] = defaultEmojis[status] || '📌';
+    });
+    setStatusEmojis(newStatusEmojis);
+    localStorage.setItem('status_emojis', JSON.stringify(newStatusEmojis));
+  };
 
   const handleTestConnection = async () => {
     setLoading(true);
@@ -114,6 +201,72 @@ export const Configuration: React.FC<ConfigurationProps> = ({ onConfigSaved }) =
       >
         {loading ? 'Testing...' : 'Test Connection & Save'}
       </button>
+
+      {/* Emoji Configuration Section */}
+      <div className="emoji-config-section" style={{ marginTop: '2rem', borderTop: '1px solid #ddd', paddingTop: '1rem' }}>
+        <div className="section-header">
+          <h3>Status Emojis Configuration</h3>
+          <button 
+            className="toggle-btn"
+            onClick={() => setShowEmojiConfig(!showEmojiConfig)}
+            style={{ marginLeft: '1rem' }}
+          >
+            {showEmojiConfig ? '▲ Hide' : '▼ Show'}
+          </button>
+        </div>
+
+        {showEmojiConfig && (
+          <div className="emoji-config">
+            <p>Customize emojis that appear in the menu bar for each status:</p>
+            
+            <div className="emoji-config-actions" style={{ marginBottom: '1rem' }}>
+              <button 
+                onClick={loadAvailableStatuses}
+                disabled={loadingStatuses || !url || !email || !token}
+                style={{ marginRight: '1rem' }}
+              >
+                {loadingStatuses ? 'Loading...' : 'Load Project Statuses'}
+              </button>
+              
+              {availableStatuses.length > 0 && (
+                <button onClick={resetToDefaults}>
+                  Reset to Defaults
+                </button>
+              )}
+            </div>
+
+            {availableStatuses.length > 0 && (
+              <div className="status-emoji-grid">
+                {availableStatuses.map((status) => (
+                  <div key={status} className="status-emoji-row" style={{ display: 'flex', alignItems: 'center', marginBottom: '0.5rem', gap: '1rem' }}>
+                    <div style={{ minWidth: '150px', textAlign: 'left' }}>
+                      <strong>{status}</strong>
+                    </div>
+                    <input
+                      type="text"
+                      value={statusEmojis[status] || ''}
+                      onChange={(e) => handleEmojiChange(status, e.target.value)}
+                      placeholder="🔥"
+                      style={{ width: '60px', textAlign: 'center', fontSize: '1.2rem' }}
+                      maxLength={4}
+                    />
+                    <div style={{ fontSize: '1.2rem' }}>
+                      {statusEmojis[status]} {status}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {availableStatuses.length === 0 && (
+              <div className="emoji-hint">
+                Click "Load Project Statuses" to configure emojis for your project's statuses.
+                Make sure your connection details are correct first.
+              </div>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 };
