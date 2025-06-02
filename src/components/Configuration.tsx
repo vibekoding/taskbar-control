@@ -9,6 +9,31 @@ interface StatusEmojiConfig {
   [status: string]: string;
 }
 
+// Helper function for safe JSON parsing with type validation
+const safeParseStatusEmojis = (jsonString: string | null): StatusEmojiConfig => {
+  if (!jsonString) return {};
+  
+  try {
+    const parsedData = JSON.parse(jsonString);
+    if (
+      typeof parsedData === 'object' &&
+      parsedData !== null &&
+      Object.keys(parsedData).every(key => typeof key === 'string') &&
+      Object.values(parsedData).every(value => typeof value === 'string')
+    ) {
+      return parsedData as StatusEmojiConfig;
+    } else {
+      console.error('Invalid structure for status_emojis from localStorage:', parsedData);
+      localStorage.removeItem('status_emojis');
+      return {};
+    }
+  } catch (error) {
+    console.error('Error parsing status_emojis from localStorage:', error);
+    localStorage.removeItem('status_emojis');
+    return {};
+  }
+};
+
 export const Configuration: React.FC<ConfigurationProps> = ({ onConfigSaved }) => {
   const [url, setUrl] = useState(localStorage.getItem('jira_url') || '');
   const [email, setEmail] = useState(localStorage.getItem('jira_email') || '');
@@ -40,15 +65,9 @@ export const Configuration: React.FC<ConfigurationProps> = ({ onConfigSaved }) =
   };
 
   useEffect(() => {
-    // Load saved emoji configurations
+    // Load saved emoji configurations with safe parsing
     const savedEmojis = localStorage.getItem('status_emojis');
-    if (savedEmojis) {
-      try {
-        setStatusEmojis(JSON.parse(savedEmojis));
-      } catch (e) {
-        console.error('Error loading saved emojis:', e);
-      }
-    }
+    setStatusEmojis(safeParseStatusEmojis(savedEmojis));
   }, []);
 
   const loadAvailableStatuses = async () => {

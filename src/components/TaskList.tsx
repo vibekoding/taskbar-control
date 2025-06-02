@@ -24,6 +24,50 @@ interface StatusEmojiConfig {
   [status: string]: string;
 }
 
+// Helper functions for safe JSON parsing with type validation
+const safeParseStatusFilter = (jsonString: string | null): string[] | null => {
+  if (!jsonString) return null;
+  
+  try {
+    const parsedData = JSON.parse(jsonString);
+    if (Array.isArray(parsedData) && parsedData.every(item => typeof item === 'string')) {
+      return parsedData as string[];
+    } else {
+      console.error('Invalid structure for jira_status_filter from localStorage:', parsedData);
+      localStorage.removeItem('jira_status_filter');
+      return null;
+    }
+  } catch (error) {
+    console.error('Error parsing jira_status_filter from localStorage:', error);
+    localStorage.removeItem('jira_status_filter');
+    return null;
+  }
+};
+
+const safeParseStatusEmojis = (jsonString: string | null): StatusEmojiConfig => {
+  if (!jsonString) return {};
+  
+  try {
+    const parsedData = JSON.parse(jsonString);
+    if (
+      typeof parsedData === 'object' &&
+      parsedData !== null &&
+      Object.keys(parsedData).every(key => typeof key === 'string') &&
+      Object.values(parsedData).every(value => typeof value === 'string')
+    ) {
+      return parsedData as StatusEmojiConfig;
+    } else {
+      console.error('Invalid structure for status_emojis from localStorage:', parsedData);
+      localStorage.removeItem('status_emojis');
+      return {};
+    }
+  } catch (error) {
+    console.error('Error parsing status_emojis from localStorage:', error);
+    localStorage.removeItem('status_emojis');
+    return {};
+  }
+};
+
 export const TaskList: React.FC<TaskListProps> = ({ onConfigurationNeeded }) => {
   const [tasks, setTasks] = useState<JiraTask[]>([]);
   const [loading, setLoading] = useState(true);
@@ -55,7 +99,7 @@ export const TaskList: React.FC<TaskListProps> = ({ onConfigurationNeeded }) => 
       console.log('STEP 1: Loading credentials...');
       const token = await invoke<string>('load_credentials', { email });
       const projectKey = project && project.trim() !== '' ? project : null;
-      const statusFilter = savedStatuses ? JSON.parse(savedStatuses) : null;
+      const statusFilter = safeParseStatusFilter(savedStatuses);
       
       console.log('STEP 2: Fetching tasks...');
       const fetchedTasks = await invoke<JiraTask[]>('fetch_tasks', { 
@@ -72,7 +116,7 @@ export const TaskList: React.FC<TaskListProps> = ({ onConfigurationNeeded }) => 
       
       console.log('STEP 4: Loading emojis...');
       const savedEmojis = localStorage.getItem('status_emojis');
-      const statusEmojis: StatusEmojiConfig = savedEmojis ? JSON.parse(savedEmojis) : {};
+      const statusEmojis: StatusEmojiConfig = safeParseStatusEmojis(savedEmojis);
       console.log('Emojis:', statusEmojis);
       
       console.log('STEP 5: Calling update_menu_with_tasks...');
@@ -194,20 +238,21 @@ export const TaskList: React.FC<TaskListProps> = ({ onConfigurationNeeded }) => 
     localStorage.setItem('jira_status_filter', JSON.stringify(newSelectedStatuses));
     
     // Reload tasks with new filter
-    setTimeout(() => loadTasks(), 100);
+    loadTasks();
   };
 
   const clearStatusFilter = () => {
     setSelectedStatuses([]);
     localStorage.removeItem('jira_status_filter');
-    setTimeout(() => loadTasks(), 100);
+    loadTasks();
   };
 
   useEffect(() => {
-    // Load saved status filter
+    // Load saved status filter with safe parsing
     const savedStatuses = localStorage.getItem('jira_status_filter');
-    if (savedStatuses) {
-      setSelectedStatuses(JSON.parse(savedStatuses));
+    const parsedStatuses = safeParseStatusFilter(savedStatuses);
+    if (parsedStatuses) {
+      setSelectedStatuses(parsedStatuses);
     }
     
     loadTasks();
