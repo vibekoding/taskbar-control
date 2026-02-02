@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { Configuration } from './components/Configuration';
 import { TaskList } from './components/TaskList';
 import { invoke } from '@tauri-apps/api/core';

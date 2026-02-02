@@ -255,12 +255,47 @@ async fn fetch_tasks(url: String, email: String, token: String, project_key: Opt
     let client = reqwest::Client::new();
     let auth = general_purpose::STANDARD.encode(format!("{}:{}", email, token));
     
-    let base_jql = "assignee = currentUser() AND status NOT IN (Done, Closed, Resolved)";
-    let jql = if let Some(project) = project_key {
-        format!("{} AND project = {} ORDER BY priority DESC, updated DESC", base_jql, project)
+    let mut jql_parts = vec!["assignee = currentUser()".to_string()];
+    
+    // Add status filter
+    if let Some(statuses) = status_filter {
+        if !statuses.is_empty() {
+            println!("Applying status filter with {} statuses: {:?}", statuses.len(), statuses);
+            
+            // Filter out problematic status names and use working ones
+            let mut working_statuses = Vec::new();
+            for status in statuses {
+                match status.as_str() {
+                    "Em andamento" => {
+                        // Use the English equivalent that Jira might accept
+                        working_statuses.push("\"In Progress\"".to_string());
+                        println!("Converted 'Em andamento' to 'In Progress'");
+                    },
+                    _ => {
+                        working_statuses.push(format!("\"{}\"", status.replace("\"", "\\\"")));
+                    }
+                }
+            }
+            
+            if !working_statuses.is_empty() {
+                let status_list = working_statuses.join(", ");
+                jql_parts.push(format!("status IN ({})", status_list));
+            } else {
+                // If no working statuses, show all active tasks
+                jql_parts.push("status NOT IN (Done, Closed, Resolved)".to_string());
+            }
+        }
     } else {
-        format!("{} ORDER BY priority DESC, updated DESC", base_jql)
-    };
+        // Default: exclude completed statuses
+        jql_parts.push("status NOT IN (Done, Closed, Resolved)".to_string());
+    }
+    
+    // Add project filter
+    if let Some(project) = project_key {
+        jql_parts.push(format!("project = {}", project));
+    }
+    
+    let jql = format!("{} ORDER BY priority DESC, updated DESC", jql_parts.join(" AND "));
     println!("Executing JQL: {}", jql);
     
     let response = client
@@ -271,8 +306,11 @@ async fn fetch_tasks(url: String, email: String, token: String, project_key: Opt
         .await
         .map_err(|e| e.to_string())?;
     
-    if !response.status().is_success() {
-        return Err(format!("Failed to fetch tasks: {}", response.status()));
+    let status = response.status();
+    if !status.is_success() {
+        let error_text = response.text().await.unwrap_or_default();
+        println!("Error response: {}", error_text);
+        return Err(format!("Failed to fetch tasks: {} - {}", status, error_text));
     }
     
     let json: serde_json::Value = response.json().await.map_err(|e| e.to_string())?;
@@ -376,8 +414,55 @@ async fn transition_task(url: String, email: String, token: String, task_key: St
 }
 
 #[tauri::command]
-async fn update_menu_with_tasks(app: AppHandle, tasks: Vec<JiraTask>) -> Result<(), String> {
-    println!("Updating menu with {} tasks", tasks.len());
+async fn get_available_statuses(url: String, email: String, token: String, project_key: Option<String>) -> Result<Vec<String>, String> {
+    let client = reqwest::Client::new();
+    let auth = general_purpose::STANDARD.encode(format!("{}:{}", email, token));
+    
+    // Get statuses from current user's tasks to see what's available
+    let jql = if let Some(project) = project_key {
+        format!("assignee = currentUser() AND project = {}", project)
+    } else {
+        "assignee = currentUser()".to_string()
+    };
+    
+    let response = client
+        .get(format!("{}/rest/api/3/search", url))
+        .header("Authorization", format!("Basic {}", auth))
+        .query(&[("jql", jql.as_str()), ("maxResults", "100")])
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    
+    if !response.status().is_success() {
+        return Err(format!("Failed to get statuses: {}", response.status()));
+    }
+    
+    let json: serde_json::Value = response.json().await.map_err(|e| e.to_string())?;
+    
+    let mut statuses: Vec<String> = json["issues"]
+        .as_array()
+        .unwrap_or(&vec![])
+        .iter()
+        .filter_map(|issue| {
+            issue["fields"]["status"]["name"].as_str().map(|s| s.to_string())
+        })
+        .collect();
+    
+    // Remove duplicates and sort
+    statuses.sort();
+    statuses.dedup();
+    
+    println!("Found {} unique statuses: {:?}", statuses.len(), statuses);
+    Ok(statuses)
+}
+
+#[tauri::command]
+async fn update_menu_with_tasks(app: AppHandle, tasks: Vec<JiraTask>, status_emojis: std::collections::HashMap<String, String>) -> Result<(), String> {
+    println!("========================================");
+    println!("UPDATE_MENU_WITH_TASKS FUNCTION CALLED!");
+    println!("Number of tasks: {}", tasks.len());
+    println!("Number of emojis: {}", status_emojis.len());
+    println!("========================================");
     
     if let Some(tray) = app.tray_by_id("main") {
         let menu_builder = MenuBuilder::new(&app);
@@ -424,10 +509,16 @@ async fn update_menu_with_tasks(app: AppHandle, tasks: Vec<JiraTask>) -> Result<
             let mut task_count = 0;
             for status in sorted_statuses {
                 if let Some(status_tasks) = status_groups.get(&status) {
-                    // Add status header
+                    // Get emoji for this status
+                    let emoji = status_emojis
+                        .get(&status)
+                        .map(|s| s.as_str())
+                        .unwrap_or("📌");
+                    
+                    // Add status header with emoji
                     let status_header = MenuItemBuilder::with_id(
                         format!("status_{}", status.replace(" ", "_")),
-                        format!("── {} ({}) ──", status, status_tasks.len())
+                        format!("── {} {} ({}) ──", emoji, status, status_tasks.len())
                     )
                     .enabled(false)
                     .build(&app)
@@ -500,6 +591,10 @@ async fn update_menu_with_tasks(app: AppHandle, tasks: Vec<JiraTask>) -> Result<
         // Update tray tooltip
         tray.set_tooltip(Some(&format!("{} tasks", tasks.len())))
             .map_err(|e| e.to_string())?;
+        
+        println!("Tray menu successfully updated with {} tasks", tasks.len());
+    } else {
+        println!("ERROR: Could not find tray with id 'main'");
     }
     
     Ok(())
@@ -527,6 +622,7 @@ pub fn run() {
             fetch_tasks,
             get_task_transitions,
             transition_task,
+            get_available_statuses,
             set_hide_on_blur,
             update_menu_with_tasks
         ])

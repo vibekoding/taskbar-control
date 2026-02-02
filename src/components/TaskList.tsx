@@ -20,6 +20,54 @@ interface TaskListProps {
   onConfigurationNeeded: () => void;
 }
 
+interface StatusEmojiConfig {
+  [status: string]: string;
+}
+
+// Helper functions for safe JSON parsing with type validation
+const safeParseStatusFilter = (jsonString: string | null): string[] | null => {
+  if (!jsonString) return null;
+  
+  try {
+    const parsedData = JSON.parse(jsonString);
+    if (Array.isArray(parsedData) && parsedData.every(item => typeof item === 'string')) {
+      return parsedData as string[];
+    } else {
+      console.error('Invalid structure for jira_status_filter from localStorage:', parsedData);
+      localStorage.removeItem('jira_status_filter');
+      return null;
+    }
+  } catch (error) {
+    console.error('Error parsing jira_status_filter from localStorage:', error);
+    localStorage.removeItem('jira_status_filter');
+    return null;
+  }
+};
+
+const safeParseStatusEmojis = (jsonString: string | null): StatusEmojiConfig => {
+  if (!jsonString) return {};
+  
+  try {
+    const parsedData = JSON.parse(jsonString);
+    if (
+      typeof parsedData === 'object' &&
+      parsedData !== null &&
+      Object.keys(parsedData).every(key => typeof key === 'string') &&
+      Object.values(parsedData).every(value => typeof value === 'string')
+    ) {
+      return parsedData as StatusEmojiConfig;
+    } else {
+      console.error('Invalid structure for status_emojis from localStorage:', parsedData);
+      localStorage.removeItem('status_emojis');
+      return {};
+    }
+  } catch (error) {
+    console.error('Error parsing status_emojis from localStorage:', error);
+    localStorage.removeItem('status_emojis');
+    return {};
+  }
+};
+
 export const TaskList: React.FC<TaskListProps> = ({ onConfigurationNeeded }) => {
   const [tasks, setTasks] = useState<JiraTask[]>([]);
   const [loading, setLoading] = useState(true);
@@ -28,13 +76,18 @@ export const TaskList: React.FC<TaskListProps> = ({ onConfigurationNeeded }) => 
   const [expandedTask, setExpandedTask] = useState<string | null>(null);
   const [transitions, setTransitions] = useState<{[key: string]: JiraTransition[]}>({});
   const [transitioning, setTransitioning] = useState<string | null>(null);
+  const [availableStatuses, setAvailableStatuses] = useState<string[]>([]);
+  const [selectedStatuses, setSelectedStatuses] = useState<string[]>([]);
+  const [showStatusFilter, setShowStatusFilter] = useState(false);
 
   const loadTasks = async () => {
     const url = localStorage.getItem('jira_url');
     const email = localStorage.getItem('jira_email');
     const project = localStorage.getItem('jira_project');
+    const savedStatuses = localStorage.getItem('jira_status_filter');
     
-    console.log('TaskList loadTasks - localStorage check:', { url, email, project });
+    console.log('TaskList loadTasks - localStorage check:', { url, email, project, savedStatuses });
+    console.log('Starting to load tasks...');
     
     if (!url || !email) {
       console.log('TaskList: Missing configuration, calling onConfigurationNeeded');
@@ -43,23 +96,32 @@ export const TaskList: React.FC<TaskListProps> = ({ onConfigurationNeeded }) => 
     }
 
     try {
+      console.log('STEP 1: Loading credentials...');
       const token = await invoke<string>('load_credentials', { email });
       const projectKey = project && project.trim() !== '' ? project : null;
+      const statusFilter = safeParseStatusFilter(savedStatuses);
+      
+      console.log('STEP 2: Fetching tasks...');
       const fetchedTasks = await invoke<JiraTask[]>('fetch_tasks', { 
         url, 
         email, 
         token, 
-        projectKey 
+        projectKey,
+        statusFilter 
       });
+      
+      console.log('STEP 3: Tasks fetched -', fetchedTasks.length, 'tasks');
       setTasks(fetchedTasks);
       setError('');
       
-      // Update menu with tasks
-      try {
-        await invoke('update_menu_with_tasks', { tasks: fetchedTasks });
-      } catch (menuError) {
-        console.error('Failed to update menu:', menuError);
-      }
+      console.log('STEP 4: Loading emojis...');
+      const savedEmojis = localStorage.getItem('status_emojis');
+      const statusEmojis: StatusEmojiConfig = safeParseStatusEmojis(savedEmojis);
+      console.log('Emojis:', statusEmojis);
+      
+      console.log('STEP 5: Calling update_menu_with_tasks...');
+      await invoke('update_menu_with_tasks', { tasks: fetchedTasks, status_emojis: statusEmojis });
+      console.log('STEP 6: Menu update call completed!');
     } catch (err) {
       console.log('TaskList error:', err);
       setError(`Failed to load tasks: ${err}`);
@@ -141,8 +203,60 @@ export const TaskList: React.FC<TaskListProps> = ({ onConfigurationNeeded }) => 
     }
   };
 
-  useEffect(() => {
+  const loadAvailableStatuses = async () => {
+    const url = localStorage.getItem('jira_url');
+    const email = localStorage.getItem('jira_email');
+    const project = localStorage.getItem('jira_project');
+    
+    if (!url || !email) return;
+
+    try {
+      const token = await invoke<string>('load_credentials', { email });
+      const projectKey = project && project.trim() !== '' ? project : null;
+      const statuses = await invoke<string[]>('get_available_statuses', {
+        url,
+        email,
+        token,
+        projectKey
+      });
+      
+      setAvailableStatuses(statuses);
+    } catch (err) {
+      console.error('Failed to load available statuses:', err);
+    }
+  };
+
+  const handleStatusFilterChange = (status: string, checked: boolean) => {
+    let newSelectedStatuses;
+    if (checked) {
+      newSelectedStatuses = [...selectedStatuses, status];
+    } else {
+      newSelectedStatuses = selectedStatuses.filter(s => s !== status);
+    }
+    
+    setSelectedStatuses(newSelectedStatuses);
+    localStorage.setItem('jira_status_filter', JSON.stringify(newSelectedStatuses));
+    
+    // Reload tasks with new filter
     loadTasks();
+  };
+
+  const clearStatusFilter = () => {
+    setSelectedStatuses([]);
+    localStorage.removeItem('jira_status_filter');
+    loadTasks();
+  };
+
+  useEffect(() => {
+    // Load saved status filter with safe parsing
+    const savedStatuses = localStorage.getItem('jira_status_filter');
+    const parsedStatuses = safeParseStatusFilter(savedStatuses);
+    if (parsedStatuses) {
+      setSelectedStatuses(parsedStatuses);
+    }
+    
+    loadTasks();
+    loadAvailableStatuses();
   }, []);
 
   useEffect(() => {
@@ -213,15 +327,58 @@ export const TaskList: React.FC<TaskListProps> = ({ onConfigurationNeeded }) => 
       </div>
       
       <div className="settings">
-        <label>
-          Auto-refresh: 
-          <select value={refreshInterval} onChange={(e) => setRefreshInterval(Number(e.target.value))}>
-            <option value={5}>5 minutes</option>
-            <option value={10}>10 minutes</option>
-            <option value={15}>15 minutes</option>
-            <option value={30}>30 minutes</option>
-          </select>
-        </label>
+        <div className="setting-row">
+          <label>
+            Auto-refresh: 
+            <select value={refreshInterval} onChange={(e) => setRefreshInterval(Number(e.target.value))}>
+              <option value={5}>5 minutes</option>
+              <option value={10}>10 minutes</option>
+              <option value={15}>15 minutes</option>
+              <option value={30}>30 minutes</option>
+            </select>
+          </label>
+        </div>
+        
+        <div className="setting-row">
+          <button 
+            className="filter-toggle-btn"
+            onClick={() => setShowStatusFilter(!showStatusFilter)}
+          >
+            🔍 Filter by Status {selectedStatuses.length > 0 && `(${selectedStatuses.length})`}
+          </button>
+        </div>
+        
+        {showStatusFilter && (
+          <div className="status-filter">
+            <div className="filter-header">
+              <span>Select Status Columns:</span>
+              {selectedStatuses.length > 0 && (
+                <button className="clear-filter-btn" onClick={clearStatusFilter}>
+                  Clear All
+                </button>
+              )}
+            </div>
+            <div className="status-checkboxes">
+              {availableStatuses.map((status) => (
+                <label key={status} className="status-checkbox">
+                  <input
+                    type="checkbox"
+                    checked={selectedStatuses.includes(status)}
+                    onChange={(e) => handleStatusFilterChange(status, e.target.checked)}
+                  />
+                  <span className={`status-label ${getStatusClass(status)}`}>
+                    {status}
+                  </span>
+                </label>
+              ))}
+            </div>
+            {selectedStatuses.length === 0 && (
+              <div className="filter-hint">
+                No filters selected - showing all active tasks
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       <div className="tasks">
